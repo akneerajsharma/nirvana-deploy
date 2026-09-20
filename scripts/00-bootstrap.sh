@@ -21,7 +21,11 @@ apt-get install -y ca-certificates curl gnupg git rsync gettext-base unattended-
 # a t3.small viable; it is not a substitute for RAM under steady load.
 if ! swapon --show | grep -q '/swapfile'; then
   FREE_MB=$(df --output=avail -m / | tail -1 | tr -d ' ')
-  SWAP_MB=4096
+  # Override with SWAP_MB=6144 bash scripts/00-bootstrap.sh. The default is
+  # sized for the peak of `next build` (~2 GB) on top of Postgres, Redis and
+  # the API already running (~500 MB) — i.e. ~2.5 GB against however little
+  # RAM the instance has. 4 GB covers that with margin on a 1-2 GB box.
+  SWAP_MB="${SWAP_MB:-4096}"
   # Never take more than a third of what is free. A default 8 GB root volume
   # cannot spare 4 GB: the swapfile lands the filesystem at ~99% and every
   # later docker build fails on no space left on device.
@@ -37,8 +41,16 @@ if ! swapon --show | grep -q '/swapfile'; then
     mkswap /swapfile
     swapon /swapfile
     grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    sysctl -w vm.swappiness=10
-    grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+    # swappiness 10 suits a host with enough RAM — it keeps pages resident.
+    # Below ~2 GB that is backwards: the kernel clings to RAM under pressure
+    # and OOM-kills the build instead of swapping out gracefully, so such a
+    # host wants the kernel reaching for swap earlier.
+    RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+    if (( RAM_MB < 2048 )); then SWAPPINESS=60; else SWAPPINESS=10; fi
+    echo "    RAM ${RAM_MB}MB -> vm.swappiness=${SWAPPINESS}"
+    sysctl -w vm.swappiness=$SWAPPINESS
+    sed -i '/^vm.swappiness/d' /etc/sysctl.conf
+    echo "vm.swappiness=$SWAPPINESS" >> /etc/sysctl.conf
   fi
 fi
 

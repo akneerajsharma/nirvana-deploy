@@ -35,6 +35,11 @@ This replaces the ECS Fargate + Amplify + CloudFront topology described in
   t3.micro (1 GB) is not enough — the build fails even with swap.
 - **t3.medium (4 GB) recommended** once Postgres has real data — Postgres,
   Redis, Node × 2 and the build all share this box.
+- **Swap defaults to 4 GB**, sized for the peak of `next build` (~2 GB) on top
+  of Postgres, Redis and the API already running (~500 MB). Override with
+  `SWAP_MB=6144 bash scripts/00-bootstrap.sh`. Below 2 GB of RAM the script
+  also sets `vm.swappiness=60` rather than 10, so the kernel reaches for swap
+  before the OOM killer reaches for the build.
 - **30 GB gp3 root volume minimum.** Docker images, the database, uploads,
   backups and the swapfile all live on it. The 8 GB default that most AMIs
   ship with fills up before the first build finishes; the bootstrap script
