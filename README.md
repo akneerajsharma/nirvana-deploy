@@ -5,7 +5,8 @@ Runs all three surfaces on one EC2 instance:
 | URL | Service | How it runs |
 |---|---|---|
 | `https://api.<domain>` | `backend` — NestJS API | Docker container, loopback `:3000`, behind Nginx |
-| `https://<domain>` / `www` | `web` — Next.js marketing site | Docker container, loopback `:3001`, behind Nginx |
+| `https://<domain>` | `web` — Next.js marketing site | Docker container, loopback `:3001`, behind Nginx |
+| `https://www.<domain>` | — | 301 to the apex; the apex is canonical |
 | `https://app.<domain>` | `app` — Flutter web portals | Static files in `/opt/nirvana/app-web`, served by Nginx |
 
 Postgres 16 and Redis 7 run as containers on the same box and publish **no**
@@ -129,6 +130,14 @@ docker run --rm -v nirvana_uploads:/data -v /opt/nirvana/backups:/b alpine \
 the client bundle, so changing `DOMAIN` in `.env` requires a rebuild
 (`docker compose build web`), not just a restart. `20-deploy.sh` rebuilds on
 every run, so this is only a trap when restarting by hand.
+
+**The web build reads live CMS content from the API.** Next.js prerenders
+pages at build time, and when the API is unreachable it falls back to the
+static copy in `content/*.ts` *without failing the build*. `20-deploy.sh`
+therefore brings the backend up and waits for it to be healthy before
+building web, and warns if `https://api.<domain>` is not reachable. ISR
+(5-minute revalidate) repairs stale content afterwards, but the first
+visitors after a deploy would otherwise see placeholder copy.
 
 **The Flutter bundle is also built against a fixed API URL.** Changing the
 domain means re-running `40-publish-app-web.sh`.

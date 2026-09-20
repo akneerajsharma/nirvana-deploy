@@ -36,11 +36,32 @@ server {
     }
 }
 
-# --- Marketing site: ${DOMAIN} + www -> Next.js on 127.0.0.1:3001 ------
+# --- www -> apex redirect ----------------------------------------------
+# The canonical host is the apex (content/site.ts > siteUrl). Without this
+# both hosts would serve identical pages and compete in the index.
 server {
     listen 80;
     listen [::]:80;
-    server_name ${DOMAIN} www.${DOMAIN};
+    server_name www.${DOMAIN};
+
+    # This must be a location, not a server-level `return`: a server-level
+    # return runs in the rewrite phase, ahead of location matching, and would
+    # bounce Let's Encrypt's validation request to the apex — where the
+    # challenge file for www does not exist, failing renewal.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://${DOMAIN}$request_uri;
+    }
+}
+
+# --- Marketing site: ${DOMAIN} -> Next.js on 127.0.0.1:3001 ------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
 
     access_log /var/log/nginx/nirvana-web.access.log;
     error_log  /var/log/nginx/nirvana-web.error.log;

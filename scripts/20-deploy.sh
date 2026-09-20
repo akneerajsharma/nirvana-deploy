@@ -45,10 +45,14 @@ done
 echo "==> Starting data stores"
 docker compose up -d postgres redis
 
-echo "==> Building images: ${TARGETS[*]}"
-docker compose build "${TARGETS[@]}"
-
+# Backend goes first and must be healthy before web is built: the Next.js
+# build prerenders pages from the live API, and on a failed fetch it silently
+# falls back to the static content in content/*.ts rather than erroring. ISR
+# would repair that within the 5m revalidate window, but the first visitors
+# after a deploy would be served placeholder copy.
 if [[ " ${TARGETS[*]} " == *" backend "* ]]; then
+  echo "==> Building backend"
+  docker compose build backend
   # `compose run` reuses an existing image rather than rebuilding, so without
   # this the migrate container would replay the *previous* commit's migrations.
   docker compose --profile tools build migrate seed
@@ -58,26 +62,38 @@ if [[ " ${TARGETS[*]} " == *" backend "* ]]; then
   # stops here on failure rather than restarting the API against a schema it
   # does not match.
   docker compose --profile tools run --rm migrate
+
+  echo "==> Restarting backend"
+  docker compose up -d --no-deps backend
+
+  echo "==> Waiting for backend health"
+  for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:3000/api/v1/health >/dev/null 2>&1; then
+      echo "    backend healthy"; break
+    fi
+    [[ $i -eq 30 ]] && { echo "    backend did not become healthy — docker compose logs backend" >&2; exit 1; }
+    sleep 2
+  done
 fi
 
-echo "==> Restarting services"
-docker compose up -d --no-deps "${TARGETS[@]}"
-
-echo "==> Waiting for health"
-for i in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:3000/api/v1/health >/dev/null 2>&1; then
-    echo "    backend healthy"
-    break
-  fi
-  [[ $i -eq 30 ]] && { echo "    backend did not become healthy — docker compose logs backend" >&2; exit 1; }
-  sleep 2
-done
-
 if [[ " ${TARGETS[*]} " == *" web "* ]]; then
+  # The build fetches https://api.$DOMAIN over the public internet, so DNS and
+  # the certificate must already be in place (scripts/10-nginx.sh).
+  if ! curl -fsS "https://api.$DOMAIN/api/v1/health" >/dev/null 2>&1; then
+    echo "    WARNING: https://api.$DOMAIN is not reachable — the web build will" >&2
+    echo "    prerender static fallback content instead of live CMS content." >&2
+  fi
+
+  echo "==> Building web"
+  docker compose build web
+
+  echo "==> Restarting web"
+  docker compose up -d --no-deps web
+
+  echo "==> Waiting for web health"
   for i in $(seq 1 30); do
     if curl -fsS -o /dev/null http://127.0.0.1:3001/; then
-      echo "    web healthy"
-      break
+      echo "    web healthy"; break
     fi
     [[ $i -eq 30 ]] && { echo "    web did not become healthy — docker compose logs web" >&2; exit 1; }
     sleep 2
