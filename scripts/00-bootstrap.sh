@@ -20,14 +20,26 @@ apt-get install -y ca-certificates curl gnupg git rsync gettext-base unattended-
 # OOM killer takes the whole build down with a confusing exit 137. Swap makes
 # a t3.small viable; it is not a substitute for RAM under steady load.
 if ! swapon --show | grep -q '/swapfile'; then
-  echo "==> Creating 4G swapfile"
-  fallocate -l 4G /swapfile
-  chmod 600 /swapfile
-  mkswap /swapfile
-  swapon /swapfile
-  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  sysctl -w vm.swappiness=10
-  grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+  FREE_MB=$(df --output=avail -m / | tail -1 | tr -d ' ')
+  SWAP_MB=4096
+  # Never take more than a third of what is free. A default 8 GB root volume
+  # cannot spare 4 GB: the swapfile lands the filesystem at ~99% and every
+  # later docker build fails on no space left on device.
+  if (( FREE_MB < SWAP_MB * 3 )); then SWAP_MB=$(( FREE_MB / 3 )); fi
+
+  if (( SWAP_MB < 1024 )); then
+    echo "!!  Only ${FREE_MB}MB free on / — skipping swapfile."
+    echo "!!  Expand the root volume to at least 30 GB, then re-run this script."
+  else
+    echo "==> Creating ${SWAP_MB}M swapfile (${FREE_MB}MB free on /)"
+    fallocate -l "${SWAP_MB}M" /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    sysctl -w vm.swappiness=10
+    grep -q '^vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+  fi
 fi
 
 echo "==> Installing Docker Engine + Compose plugin"

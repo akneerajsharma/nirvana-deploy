@@ -30,13 +30,18 @@ This replaces the ECS Fargate + Amplify + CloudFront topology described in
 
 ## Instance sizing
 
-- **t3.small (2 vCPU / 2 GB) minimum.** The bootstrap script adds a 4 GB
-  swapfile because `next build` will otherwise be OOM-killed mid-build
-  (exit 137).
+- **t3.small (2 vCPU / 2 GB) minimum.** The bootstrap script adds a swapfile
+  because `next build` will otherwise be OOM-killed mid-build (exit 137).
+  t3.micro (1 GB) is not enough — the build fails even with swap.
 - **t3.medium (4 GB) recommended** once Postgres has real data — Postgres,
   Redis, Node × 2 and the build all share this box.
-- **30 GB gp3 root volume minimum.** Docker images, the database, uploads
-  and backups all live on it.
+- **30 GB gp3 root volume minimum.** Docker images, the database, uploads,
+  backups and the swapfile all live on it. The 8 GB default that most AMIs
+  ship with fills up before the first build finishes; the bootstrap script
+  shrinks or skips the swapfile rather than filling the disk, and says so.
+- **Attach an Elastic IP before setting DNS.** Resizing the instance requires
+  a stop/start, which changes a plain public IP and breaks both DNS and every
+  issued certificate.
 
 Security group inbound: **22, 80, 443 only**.
 
