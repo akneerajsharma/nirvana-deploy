@@ -94,8 +94,17 @@ server — the SDK plus build cache would dominate a small instance's disk):
 
 ```bash
 cd ~/Documents/neeraj/softwares/nirvana/deploy
+export PATH="$HOME/flutter/bin:$PATH"
 DOMAIN=<domain> EC2_HOST=ubuntu@<elastic-ip> SSH_KEY=~/.ssh/<key>.pem \
   bash scripts/40-publish-app-web.sh
+```
+
+`/opt/nirvana/app-web` must be writable by the SSH user. Bootstrap run under
+`sudo` from a root shell leaves it root-owned, in which case rsync fails with
+permission denied — fix once with:
+
+```bash
+sudo chown -R ubuntu:ubuntu /opt/nirvana/app-web
 ```
 
 **Attach an Elastic IP before setting DNS.** A stop/start on a plain EC2

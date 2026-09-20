@@ -22,8 +22,10 @@ fi
 
 REMOTE_DIR="${REMOTE_DIR:-/opt/nirvana/app-web}"
 API_BASE_URL="${API_BASE_URL:-https://api.$DOMAIN/api/v1}"
-SSH_OPTS=()
-[[ -n "${SSH_KEY:-}" ]] && SSH_OPTS=(-i "$SSH_KEY")
+# Built as a single string rather than an array: rsync -e takes one word-split
+# argument, so a key path containing spaces has to be quoted here.
+SSH_CMD="ssh -o StrictHostKeyChecking=accept-new"
+[[ -n "${SSH_KEY:-}" ]] && SSH_CMD="$SSH_CMD -i '$SSH_KEY'"
 
 command -v flutter >/dev/null || { echo "flutter not found on PATH" >&2; exit 1; }
 
@@ -41,7 +43,7 @@ echo "==> Publishing to $EC2_HOST:$REMOTE_DIR"
 # --delete removes files from the previous build that the new one no longer
 # emits; without it stale hashed bundles accumulate indefinitely.
 rsync -az --delete \
-  -e "ssh ${SSH_OPTS[*]}" \
+  -e "$SSH_CMD" \
   "$APP_DIR/build/web/" \
   "$EC2_HOST:$REMOTE_DIR/"
 
