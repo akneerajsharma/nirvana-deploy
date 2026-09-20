@@ -69,13 +69,17 @@ $EDITOR .env              # set DOMAIN, CERT_EMAIL and paste the secrets in
 # 4. Nginx + Let's Encrypt
 sudo bash scripts/10-nginx.sh
 
-# 5. Deploy backend + web
+# 5. Deploy keys — the app repos are private, so the host needs read access
+bash scripts/05-deploy-keys.sh          # prints two keys to register
+bash scripts/05-deploy-keys.sh --verify # after registering them
+
+# 6. Deploy backend + web
 bash scripts/20-deploy.sh
 
-# 6. Seed reference data (first deploy only — it is not idempotent)
+# 7. Seed reference data (first deploy only — it is not idempotent)
 docker compose --profile tools run --rm seed
 
-# 7. Nightly backups
+# 8. Nightly backups
 sudo crontab -e
 # 15 2 * * * /opt/nirvana/deploy/scripts/30-backup.sh >> /var/log/nirvana-backup.log 2>&1
 ```
