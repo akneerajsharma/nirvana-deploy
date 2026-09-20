@@ -10,6 +10,23 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # The stock config assumes a dedicated database server. On a shared 1-2 GB
+    # host it reserves memory the API and web process need more. These values
+    # suit a small clinic workload; raise them with the instance.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-64MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE:-256MB}
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - work_mem=2MB
+      # Each connection slot costs memory whether or not it is used; Prisma
+      # opens about five, leaving room for migrations and a psql session.
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-25}
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -71,6 +88,9 @@ services:
       PAYMENT_KEY_ID: ${PAYMENT_KEY_ID:-}
       PAYMENT_KEY_SECRET: ${PAYMENT_KEY_SECRET:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+      # Bounds the heap so one process cannot starve the others on a small
+      # host. Node otherwise sizes the old space from total system memory.
+      NODE_OPTIONS: --max-old-space-size=${BACKEND_HEAP_MB:-256}
     volumes:
       - uploads:/app/uploads
     ports:
@@ -88,7 +108,10 @@ services:
       target: runtime
       args:
         NEXT_PUBLIC_API_BASE_URL: https://api.${DOMAIN}/api/v1
+        NODE_BUILD_HEAP_MB: ${WEB_BUILD_HEAP_MB:-1536}
     restart: unless-stopped
+    environment:
+      NODE_OPTIONS: --max-old-space-size=${WEB_HEAP_MB:-256}
     ports:
       - '127.0.0.1:3001:3000'
 

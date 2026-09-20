@@ -177,6 +177,43 @@ endpoint in the system. Restrict it in Nginx before launch:
 location /api/docs { allow <your-ip>/32; deny all; proxy_pass http://127.0.0.1:3000; }
 ```
 
+## Running on a small instance
+
+The stack fits a 1 GB box, but only with the tuning in `.env.example` under
+*Small-host tuning* — Postgres capped, both Node heaps bounded, and a bounded
+build heap. Steady state then lands around 700 MB:
+
+| | approx RSS |
+|---|---|
+| OS + systemd | ~150 MB |
+| Docker daemon + containerd | ~100 MB |
+| Postgres (tuned) | ~120 MB |
+| NestJS API | ~150 MB |
+| Next.js | ~130 MB |
+| Redis | ~10 MB |
+
+Redis is not a candidate for removal despite its size: OTP login, refresh
+tokens, 2FA and both BullMQ queues live in it. Dropping it breaks
+authentication to reclaim ~1% of RAM.
+
+The spike that actually breaks a small host is `next build`, not steady
+state. Two ways out, in order of preference:
+
+1. **Build off-box.** GitHub Actions builds and pushes images to GHCR; the
+   server only pulls. Removes the spike entirely and stops builds burning T3
+   CPU credits. Free within the Actions free tier.
+2. **Bound the build heap** (`WEB_BUILD_HEAP_MB`, default 1536), which makes
+   the build slow rather than fatal.
+
+**Watch T3 credit mode.** T3 instances default to `unlimited`, which bills
+surplus CPU at roughly $0.05/vCPU-hour rather than throttling. Repeated
+on-box builds can quietly add to the bill — another reason to build
+elsewhere. `standard` mode caps performance instead of charging.
+
+**Pre-launch, stop what you are not using.** `docker compose stop web` frees
+~130 MB while you work on the API, and stopping the instance outside working
+hours saves instance-hours (EBS and the public IPv4 are billed regardless).
+
 ## Trade-offs
 
 This topology is cheap and easy to reason about, and it is a real step down in
