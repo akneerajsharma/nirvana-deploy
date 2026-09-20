@@ -1,0 +1,96 @@
+# Rendered to /etc/nginx/sites-available/nirvana.conf by scripts/10-nginx.sh
+# (envsubst replaces ${DOMAIN}). HTTP only — `certbot --nginx` rewrites these
+# blocks in place to add TLS and the 80->443 redirect.
+
+# socket.io needs Connection: upgrade on websocket requests and
+# Connection: close otherwise; a hardcoded "upgrade" breaks plain HTTP calls.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# --- API: api.${DOMAIN} -> NestJS on 127.0.0.1:3000 --------------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.${DOMAIN};
+
+    # Patient documents and media uploads; Nginx's 1m default would reject
+    # anything larger with a 413 before the app ever sees it.
+    client_max_body_size 25m;
+
+    access_log /var/log/nginx/nirvana-api.access.log;
+    error_log  /var/log/nginx/nirvana-api.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+
+# --- Marketing site: ${DOMAIN} + www -> Next.js on 127.0.0.1:3001 ------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN};
+
+    access_log /var/log/nginx/nirvana-web.access.log;
+    error_log  /var/log/nginx/nirvana-web.error.log;
+
+    # Content-hashed build output — safe to cache hard at the edge/browser.
+    location /_next/static/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# --- Portals: app.${DOMAIN} -> static Flutter web build ----------------
+server {
+    listen 80;
+    listen [::]:80;
+    server_name app.${DOMAIN};
+
+    root /opt/nirvana/app-web;
+    index index.html;
+
+    access_log /var/log/nginx/nirvana-app.access.log;
+    error_log  /var/log/nginx/nirvana-app.error.log;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/wasm;
+
+    # These three decide whether a returning user gets the new build. If they
+    # are cached, the browser keeps booting the previous release forever.
+    location = /index.html            { add_header Cache-Control "no-cache"; }
+    location = /flutter_service_worker.js { add_header Cache-Control "no-cache"; }
+    location = /version.json          { add_header Cache-Control "no-cache"; }
+
+    location /assets/ {
+        expires 30d;
+        add_header Cache-Control "public";
+    }
+
+    # Flutter routes are client-side; any unknown path must still serve the
+    # shell rather than 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

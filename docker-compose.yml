@@ -1,0 +1,124 @@
+# Production stack for a single EC2 host (Ubuntu 24.04 LTS).
+#
+# Nginx runs on the host, not here — it terminates TLS and reverse-proxies to
+# the two app containers, which publish only on the loopback interface. The
+# data stores publish nothing at all and are reachable solely over the
+# compose network.
+name: nirvana
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # BullMQ requires noeviction: with any other policy Redis may silently
+    # drop job keys under memory pressure and jobs vanish mid-flight.
+    command: ['redis-server', '--maxmemory-policy', 'noeviction', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../src/backend
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      APP_URL: https://api.${DOMAIN}
+      CORS_ORIGINS: https://${DOMAIN},https://www.${DOMAIN},https://app.${DOMAIN}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL_SECONDS: ${JWT_ACCESS_TTL_SECONDS:-900}
+      JWT_REFRESH_TTL_SECONDS: ${JWT_REFRESH_TTL_SECONDS:-2592000}
+      OTP_TTL_SECONDS: ${OTP_TTL_SECONDS:-300}
+      OTP_LENGTH: ${OTP_LENGTH:-6}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_MEDIA_BUCKET: ${S3_MEDIA_BUCKET:-nirvana-media-local}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      SMS_PROVIDER: ${SMS_PROVIDER:-console}
+      WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-console}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-razorpay}
+      PAYMENT_KEY_ID: ${PAYMENT_KEY_ID:-}
+      PAYMENT_KEY_SECRET: ${PAYMENT_KEY_SECRET:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - '127.0.0.1:3000:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/api/v1/health']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  web:
+    build:
+      context: ../src/web
+      target: runtime
+      args:
+        NEXT_PUBLIC_API_BASE_URL: https://api.${DOMAIN}/api/v1
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3001:3000'
+
+  # --- one-off tooling, never started by `docker compose up` ------------
+  migrate:
+    build:
+      context: ../src/backend
+      target: migrate
+    profiles: ['tools']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+
+  seed:
+    build:
+      context: ../src/backend
+      target: migrate
+    profiles: ['tools']
+    command: ['npm', 'run', 'prisma:seed']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
