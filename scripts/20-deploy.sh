@@ -20,7 +20,13 @@ BRANCH="${GIT_BRANCH:-main}"
 if [[ $# -gt 0 ]]; then TARGETS=("$@"); else TARGETS=(backend web); fi
 
 sync_repo() {
-  local name="$1" url="$2" dir="$SRC_DIR/$name"
+  # Separate statements on purpose: bash expands every word on a `local`
+  # line before performing any of its assignments, so a single-line
+  # `local name="$1" dir="$SRC_DIR/$name"` reads the *enclosing* scope's
+  # $name — unset — and aborts under `set -u`.
+  local name="$1"
+  local url="$2"
+  local dir="$SRC_DIR/$name"
   if [[ -d "$dir/.git" ]]; then
     echo "==> Updating $name"
     git -C "$dir" fetch --prune origin
